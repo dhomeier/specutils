@@ -882,7 +882,14 @@ def test_wcs1d_fits_uncertainty(tmp_path, uncertainty_rsv):
     # Read it in and check against the original
     with pytest.raises(ValueError, match=f"Invalid uncertainty type: '{uncertainty_alt}'; should"):
         spec = Spectrum1D.read(tmpfile, uncertainty_hdu=2, uncertainty_type=uncertainty_alt)
-    spec = Spectrum1D.read(tmpfile, uncertainty_hdu=2, uncertainty_type=uncertainty_type)
+    # Need to specify type if not default
+    with pytest.warns(AstropyUserWarning, match="Could not determine uncertainty type for HDU "
+                      rf"'2' .'{uncertainty_alt.upper()}'., assuming 'StdDev'"):
+        spec = Spectrum1D.read(tmpfile, uncertainty_hdu=2)
+    if uncertainty_type != 'std':
+        assert spec.uncertainty.uncertainty_type != uncertainty_type
+        spec = Spectrum1D.read(tmpfile, uncertainty_hdu=2, uncertainty_type=uncertainty_type)
+
     assert spec.flux.unit == spectrum.flux.unit
     assert spec.spectral_axis.unit == spectrum.spectral_axis.unit
     assert quantity_allclose(spec.uncertainty.quantity, spectrum.uncertainty.quantity)
@@ -978,9 +985,8 @@ def test_wcs1d_fits_non1d(tmp_path, spectral_axis):
     spectrum.write(tmpfile, format='wcs1d-fits')
 
     # Reopen file and update header with off-diagonal element
-    hdulist = fits.open(tmpfile, mode='update')
-    hdulist[0].header.update([('PC1_2', 0.2)])
-    hdulist.close()
+    with fits.open(tmpfile, mode='update') as hdulist:
+        hdulist[0].header.update([('PC1_2', 0.2)])
 
     with pytest.raises(ValueError,
                        match='Non-zero off-diagonal matrix elements excluded from the subimage.'):
@@ -993,7 +999,7 @@ def test_wcs1d_fits_non1d(tmp_path, spectral_axis):
 def test_wcs1d_fits_compressed(compress, tmp_path):
     """Test automatic recognition of supported compression formats for IMAGE/WCS.
     """
-    ext = {'gzip': 'gz', 'bzip2': 'bz2', 'xz': 'xz'}
+    ext = {'gzip': '.gz', 'bzip2': '.bz2', 'xz': '.xz'}
     if compress == 'bzip2' and not HAS_BZ2:
         pytest.xfail("Python installation has no bzip2 support")
     if compress == 'xz' and not HAS_LZMA:
@@ -1017,7 +1023,7 @@ def test_wcs1d_fits_compressed(compress, tmp_path):
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', FITSFixedWarning)
         os.system(f'{compress} {tmpfile}')
-        spec = Spectrum1D.read(tmpfile.with_suffix(f'.fits.{ext[compress]}'))
+        spec = Spectrum1D.read(tmpfile.with_suffix(f'{tmpfile.suffix}{ext[compress]}'))
 
     assert isinstance(spec, Spectrum1D)
     assert quantity_allclose(spec.spectral_axis, disp)
@@ -1026,7 +1032,7 @@ def test_wcs1d_fits_compressed(compress, tmp_path):
     # Try again without compression suffix:
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', FITSFixedWarning)
-        os.system(f'mv {tmpfile}.{ext[compress]} {tmpfile}')
+        shutil.move(tmpfile.with_suffix(f'{tmpfile.suffix}{ext[compress]}'), tmpfile)
         spec = Spectrum1D.read(tmpfile)
 
     assert isinstance(spec, Spectrum1D)
